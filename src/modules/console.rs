@@ -1,9 +1,9 @@
-use ratatui::{
-    widgets::{Block, Borders, Paragraph},
-    layout::{Layout, Direction, Constraint},
-    Frame,
-};
 use crossterm::event::KeyEvent;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Block, Borders, Paragraph},
+};
 
 use super::Module;
 
@@ -16,21 +16,21 @@ impl Console {
 }
 
 impl Module for Console {
-    fn render(&mut self, f: &mut Frame) {
+    fn render(&mut self, f: &mut Frame, area: Rect) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(1),
-            ])
-            .split(f.area());
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .split(area);
 
-        let header = Paragraph::new("MOTHER SYSTEM CONSOLE  |  [F2] DIALOG  [F3] GRAPH  [Ctrl+Q] QUIT")
-            .block(Block::default().borders(Borders::ALL));
+        let header = Paragraph::new(
+            "MOTHER SYSTEM CONSOLE  |  ':' enters command mode (:d dialog, :g graph, :q quit)",
+        )
+        .block(Block::default().borders(Borders::ALL));
 
         let body = Paragraph::new(
-            "STATUS: ONLINE\nDATABASE: CONNECTED\nMODE: OPERATOR CONTROLLED\n\nAwaiting command..."
-        ).block(Block::default().borders(Borders::ALL));
+            "STATUS: ONLINE\nDATABASE: CONNECTED\nMODE: OPERATOR CONTROLLED\n\nAwaiting command...",
+        )
+        .block(Block::default().borders(Borders::ALL));
 
         f.render_widget(header, layout[0]);
         f.render_widget(body, layout[1]);

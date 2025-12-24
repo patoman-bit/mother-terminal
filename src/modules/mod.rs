@@ -1,8 +1,8 @@
 use crossterm::event::KeyEvent;
-use ratatui::Frame;
+use ratatui::{Frame, layout::Rect};
 
 pub trait Module {
-    fn render(&mut self, f: &mut Frame);
+    fn render(&mut self, f: &mut Frame, area: Rect);
     fn handle_input(&mut self, key: KeyEvent);
 }
 

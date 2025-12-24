@@ -1,12 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
 use super::Module;
-use crate::db::{Database, Relation};
+use crate::db::{Database, Evidence};
 
 pub struct Graph {
     db: Database,
@@ -21,7 +21,7 @@ impl Graph {
             db,
             concepts: Vec::new(),
             selected: 0,
-            status: "GRAPH READY. Use ↑/↓. [Ctrl+C] CONSOLE [Ctrl+D] DIALOG [Ctrl+Q] QUIT".to_string(),
+            status: "GRAPH READY. Use ↑/↓. ':' enters command mode for navigation.".to_string(),
         };
         g.refresh();
         g
@@ -45,11 +45,11 @@ impl Graph {
 }
 
 impl Module for Graph {
-    fn render(&mut self, f: &mut Frame) {
+    fn render(&mut self, f: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(1)])
-            .split(f.area());
+            .split(area);
 
         let body = Layout::default()
             .direction(Direction::Horizontal)
@@ -57,12 +57,16 @@ impl Module for Graph {
             .split(chunks[1]);
 
         // Header / status
-        let header = Paragraph::new(self.status.as_str())
-            .block(Block::default().borders(Borders::ALL).title("MOTHER / GRAPH"));
+        let header = Paragraph::new(self.status.as_str()).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("MOTHER / GRAPH"),
+        );
         f.render_widget(header, chunks[0]);
 
         // Left: concept list
-        let items: Vec<ListItem> = self.concepts
+        let items: Vec<ListItem> = self
+            .concepts
             .iter()
             .enumerate()
             .map(|(i, name)| {
@@ -74,19 +78,16 @@ impl Module for Graph {
             })
             .collect();
 
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("CONCEPTS"));
+        let list = List::new(items).block(Block::default().borders(Borders::ALL).title("CONCEPTS"));
 
         f.render_widget(list, body[0]);
 
         // Right: relations for selected concept
         let right_text = if let Some(name) = self.selected_name() {
-            match self.db.list_relations_for(name, 200) {
-                Ok(rels) => render_relations(name, &rels),
-                Err(e) => format!("DB error: {}\n", e),
-            }
+            render_details(&self.db, name)
         } else {
-            "No concepts found.\nGo to DIALOG and add one using:\nlearn <concept> is <definition>\n".to_string()
+            "No concepts found.\nGo to DIALOG and add one using:\nlearn <concept> is <definition>\n"
+                .to_string()
         };
 
         let rel_view = Paragraph::new(right_text)
@@ -113,22 +114,90 @@ impl Module for Graph {
     }
 }
 
-fn render_relations(name: &str, rels: &[Relation]) -> String {
+fn render_details(db: &Database, name: &str) -> String {
     let mut out = String::new();
-    out.push_str(&format!("FOCUS: {}\n\n", name));
-    if rels.is_empty() {
-        out.push_str("No relations.\n\nAdd one in DIALOG like:\n  rel jwt uses jws\n  rel jwt used_for authentication\n");
-        return out;
+    match db.get_concept(name) {
+        Ok(Some(c)) => {
+            out.push_str(&format!("FOCUS: {}\n", c.name));
+            out.push_str(&format!("Definition: {}\n", c.definition));
+            out.push_str(&format!("Confidence: {:.2}\n", c.confidence));
+            out.push_str(&format!("Created: {}\n\n", c.created_at));
+        }
+        Ok(None) => {
+            out.push_str(&format!("Concept '{}' not found.\n", name));
+            return out;
+        }
+        Err(e) => {
+            out.push_str(&format!("DB error fetching concept: {}\n", e));
+            return out;
+        }
     }
 
-    out.push_str("Outgoing:\n");
-    for r in rels.iter().filter(|r| r.from == name) {
-        out.push_str(&format!("  {} --{}--> {}\n", r.from, r.relation_type, r.to));
+    match db.list_relations_for(name, 200) {
+        Ok(rels) if rels.is_empty() => {
+            out.push_str("No relations yet. Add from DIALOG:\n  rel <from> <type> <to>\n\n");
+        }
+        Ok(rels) => {
+            out.push_str("Outgoing:\n");
+            for r in rels.iter().filter(|r| r.from == name) {
+                out.push_str(&format!("  {} --{}--> {}\n", r.from, r.relation_type, r.to));
+            }
+            out.push('\n');
+            out.push_str("Incoming:\n");
+            for r in rels.iter().filter(|r| r.to == name) {
+                out.push_str(&format!("  {} --{}--> {}\n", r.from, r.relation_type, r.to));
+            }
+            out.push('\n');
+        }
+        Err(e) => out.push_str(&format!("DB error: {}\n\n", e)),
     }
-    out.push('\n');
-    out.push_str("Incoming:\n");
-    for r in rels.iter().filter(|r| r.to == name) {
-        out.push_str(&format!("  {} --{}--> {}\n", r.from, r.relation_type, r.to));
+
+    match db.list_claims_for(name, 50) {
+        Ok(claims) if claims.is_empty() => out.push_str("Claims: none\n\n"),
+        Ok(claims) => {
+            out.push_str("Claims:\n");
+            for claim in claims {
+                let mut line = format!(
+                    "  [{}] {:.2} {}",
+                    claim.id, claim.confidence, claim.statement
+                );
+                if let Some(evidence_id) = claim.evidence_id {
+                    line.push_str(&format!(" (evidence #{})", evidence_id));
+                    if let Ok(Some(ev)) = db.get_evidence(evidence_id) {
+                        line.push_str(&format!(
+                            "\n      evidence: {} :: {}",
+                            ev.source, ev.content
+                        ));
+                    }
+                }
+                out.push_str(&line);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+        Err(e) => out.push_str(&format!("DB error loading claims: {}\n\n", e)),
     }
+
+    match db.list_evidence_for(name, 20) {
+        Ok(evs) if evs.is_empty() => out.push_str("Evidence: none\n"),
+        Ok(evs) => {
+            out.push_str("Evidence (recent):\n");
+            for Evidence {
+                id,
+                source,
+                content,
+                captured_at,
+                ..
+            } in evs
+            {
+                out.push_str(&format!(
+                    "  [{}] {} :: {} ({})\n",
+                    id, source, content, captured_at
+                ));
+            }
+        }
+        Err(e) => out.push_str(&format!("DB error loading evidence: {}\n", e)),
+    }
+
     out
 }
