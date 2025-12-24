@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result, params};
 use time::OffsetDateTime;
 
 pub struct Database {
@@ -31,9 +31,32 @@ pub struct Episode {
     pub summary: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    pub id: i64,
+    pub source: String,
+    pub excerpt: String,
+    pub trust_score: f64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Claim {
+    pub id: i64,
+    pub concept: String,
+    pub statement: String,
+    pub evidence_id: Option<i64>,
+    pub confirmation_state: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 impl Database {
     pub fn init(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
+
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
 
         conn.execute_batch(
             "
@@ -60,7 +83,28 @@ impl Database {
               outcome TEXT NOT NULL,
               summary TEXT NOT NULL
             );
-            "
+
+            CREATE TABLE IF NOT EXISTS evidence (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              source TEXT NOT NULL,
+              excerpt TEXT NOT NULL,
+              trust_score REAL NOT NULL DEFAULT 0.0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS claims (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              concept TEXT NOT NULL,
+              statement TEXT NOT NULL,
+              evidence_id INTEGER,
+              confirmation_state TEXT NOT NULL DEFAULT 'unknown',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(concept, statement),
+              FOREIGN KEY(evidence_id) REFERENCES evidence(id) ON DELETE SET NULL
+            );
+            ",
         )?;
 
         Ok(Self { conn })
@@ -88,7 +132,7 @@ impl Database {
 
     pub fn get_concept(&self, name: &str) -> Result<Option<Concept>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1"
+            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1",
         )?;
 
         let mut rows = stmt.query(params![name])?;
@@ -110,7 +154,7 @@ impl Database {
             "SELECT id, name, definition, confidence, created_at
              FROM concepts
              ORDER BY id DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -131,9 +175,9 @@ impl Database {
     }
 
     pub fn list_concept_names(&self, limit: usize) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM concepts ORDER BY name ASC LIMIT ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM concepts ORDER BY name ASC LIMIT ?1")?;
         let rows = stmt.query_map(params![limit as i64], |row| row.get(0))?;
         let mut out = Vec::new();
         for r in rows {
@@ -164,7 +208,7 @@ impl Database {
             WHERE from_concept = ?1 OR to_concept = ?1
             ORDER BY id DESC
             LIMIT ?2
-            "
+            ",
         )?;
 
         let rows = stmt.query_map(params![concept, limit as i64], |row| {
@@ -199,7 +243,7 @@ impl Database {
             "SELECT id, captured_at, outcome, summary
              FROM episodes
              ORDER BY id DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -208,6 +252,106 @@ impl Database {
                 captured_at: row.get(1)?,
                 outcome: row.get(2)?,
                 summary: row.get(3)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    // --- Evidence ---
+    pub fn add_evidence(&self, source: &str, excerpt: &str, trust_score: f64) -> Result<i64> {
+        let now = Self::now();
+        self.conn.execute(
+            "
+            INSERT INTO evidence (source, excerpt, trust_score, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ",
+            params![source, excerpt, trust_score, now, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_evidence(&self, limit: usize) -> Result<Vec<Evidence>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, source, excerpt, trust_score, created_at, updated_at
+            FROM evidence
+            ORDER BY id DESC
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(Evidence {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                excerpt: row.get(2)?,
+                trust_score: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    // --- Claims ---
+    pub fn add_claim(
+        &self,
+        concept: &str,
+        statement: &str,
+        evidence_id: Option<i64>,
+        confirmation_state: &str,
+    ) -> Result<i64> {
+        let now = Self::now();
+        self.conn.execute(
+            "
+            INSERT INTO claims (concept, statement, evidence_id, confirmation_state, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(concept, statement) DO UPDATE SET
+              evidence_id = excluded.evidence_id,
+              confirmation_state = excluded.confirmation_state,
+              updated_at = excluded.updated_at
+            ",
+            params![concept, statement, evidence_id, confirmation_state, now, now],
+        )?;
+
+        let id: i64 = self.conn.query_row(
+            "SELECT id FROM claims WHERE concept = ?1 AND statement = ?2",
+            params![concept, statement],
+            |row| row.get(0),
+        )?;
+        Ok(id)
+    }
+
+    pub fn list_claims_for_concept(&self, concept: &str, limit: usize) -> Result<Vec<Claim>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, concept, statement, evidence_id, confirmation_state, created_at, updated_at
+            FROM claims
+            WHERE concept = ?1
+            ORDER BY id DESC
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![concept, limit as i64], |row| {
+            Ok(Claim {
+                id: row.get(0)?,
+                concept: row.get(1)?,
+                statement: row.get(2)?,
+                evidence_id: row.get(3)?,
+                confirmation_state: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         })?;
 
