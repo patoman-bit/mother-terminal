@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result, params};
 use time::OffsetDateTime;
 
 pub struct Database {
@@ -27,7 +27,7 @@ impl Database {
               confidence REAL NOT NULL DEFAULT 0.3,
               created_at TEXT NOT NULL
             );
-            "
+            ",
         )?;
 
         Ok(Self { conn })
@@ -54,7 +54,7 @@ impl Database {
 
     pub fn get_concept(&self, name: &str) -> Result<Option<Concept>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1"
+            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1",
         )?;
 
         let mut rows = stmt.query(params![name])?;
@@ -76,7 +76,7 @@ impl Database {
             "SELECT id, name, definition, confidence, created_at
              FROM concepts
              ORDER BY id DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {

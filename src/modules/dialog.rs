@@ -1,12 +1,12 @@
-use ratatui::{
-    widgets::{Block, Borders, Paragraph},
-    layout::{Layout, Direction, Constraint},
-    Frame,
-};
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    widgets::{Block, Borders, Paragraph},
+};
 
 use super::Module;
-use crate::db::{Database, Concept};
+use crate::db::{Concept, Database};
 
 #[derive(Clone, Debug)]
 struct Proposal {
@@ -49,7 +49,7 @@ impl Dialog {
 
     fn eliza_reflect(&self, text: &str) -> String {
         // Minimal seed behavior; will evolve later.
-        format!("MOTHER: Why do you say '{}'?",&text)
+        format!("MOTHER: Why do you say '{}'?", &text)
     }
 
     fn handle_command(&mut self, line: &str) {
@@ -121,6 +121,7 @@ impl Dialog {
 
     fn show_concept(&mut self, c: &Concept) {
         self.push("MOTHER: CONCEPT RECORD");
+        self.push(format!("  ID: {}", c.id));
         self.push(format!("  Name: {}", c.name));
         self.push(format!("  Definition: {}", c.definition));
         self.push(format!("  Confidence: {:.2}", c.confidence));
@@ -156,15 +157,12 @@ impl Module for Dialog {
     fn render(&mut self, f: &mut Frame) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Min(3), Constraint::Length(3)])
             .split(f.area());
 
         let text = self.history.join("\n");
-        let dialog = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title("DIALOG"));
+        let dialog =
+            Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("DIALOG"));
 
         let input = Paragraph::new(self.input.as_str())
             .block(Block::default().borders(Borders::ALL).title("INPUT"));
@@ -181,7 +179,9 @@ impl Module for Dialog {
 
             // input editing
             KeyCode::Char(c) => self.input.push(c),
-            KeyCode::Backspace => { self.input.pop(); }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
             KeyCode::Enter => {
                 let line = self.input.clone();
                 self.push(format!("YOU: {}", line));
@@ -190,5 +190,71 @@ impl Module for Dialog {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn make_key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn dialog() -> Dialog {
+        Dialog::new(Database::init(":memory:").expect("in-memory db"))
+    }
+
+    #[test]
+    fn typing_appends_to_input() {
+        let mut dialog = dialog();
+
+        dialog.handle_input(make_key(KeyCode::Char('h')));
+        dialog.handle_input(make_key(KeyCode::Char('i')));
+
+        assert_eq!(dialog.input, "hi");
+    }
+
+    #[test]
+    fn learn_and_confirm_saves_concept() {
+        let mut dialog = dialog();
+        for ch in "learn alpha is first principle".chars() {
+            dialog.handle_input(make_key(KeyCode::Char(ch)));
+        }
+        dialog.handle_input(make_key(KeyCode::Enter));
+
+        assert!(dialog.pending.is_some(), "proposal should be staged");
+
+        dialog.handle_input(make_key(KeyCode::Char('y')));
+
+        let stored = dialog
+            .db
+            .get_concept("alpha")
+            .expect("query should succeed")
+            .expect("concept should exist");
+
+        assert_eq!(stored.definition, "first principle");
+        assert!(dialog.history.iter().any(|line| line.contains("COMMITTED")));
+    }
+
+    #[test]
+    fn reject_pending_clears_proposal() {
+        let mut dialog = dialog();
+        for ch in "learn beta is second".chars() {
+            dialog.handle_input(make_key(KeyCode::Char(ch)));
+        }
+        dialog.handle_input(make_key(KeyCode::Enter));
+        assert!(dialog.pending.is_some(), "proposal should be staged");
+
+        dialog.handle_input(make_key(KeyCode::Char('n')));
+
+        assert!(dialog.pending.is_none(), "proposal should be cleared");
+        assert!(dialog.history.iter().any(|line| line.contains("rejected")));
     }
 }
