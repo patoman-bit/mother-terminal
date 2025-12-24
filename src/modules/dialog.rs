@@ -31,9 +31,12 @@ impl Dialog {
                 "MOTHER: Commands:".into(),
                 "  learn <concept> is <definition>".into(),
                 "  rel <from> <type> <to>".into(),
+                "  ep ok <what worked>".into(),
+                "  ep fail <what failed>".into(),
+                "  ep note <note>".into(),
+                "  episodes".into(),
                 "  show <concept>".into(),
                 "  list".into(),
-                "MOTHER: Screens: [Ctrl+C] CONSOLE  [Ctrl+G] GRAPH".into(),
                 "MOTHER: If a proposal appears: press [y] to confirm, [n] to reject.".into(),
             ],
             db,
@@ -43,8 +46,8 @@ impl Dialog {
 
     fn push(&mut self, line: impl Into<String>) {
         self.history.push(line.into());
-        if self.history.len() > 220 {
-            self.history.drain(0..60);
+        if self.history.len() > 240 {
+            self.history.drain(0..70);
         }
     }
 
@@ -58,6 +61,41 @@ impl Dialog {
             return;
         }
 
+        // episodes
+        if trimmed.eq_ignore_ascii_case("episodes") {
+            match self.db.list_episodes(20) {
+                Ok(items) if items.is_empty() => self.push("MOTHER: No episodes stored yet."),
+                Ok(items) => {
+                    self.push("MOTHER: Recent episodes:");
+                    for e in items {
+                        self.push(format!("  - [{}] {}  {}", e.outcome, e.captured_at, e.summary));
+                    }
+                }
+                Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
+            }
+            return;
+        }
+
+        // ep <ok|fail|note> <summary>
+        if let Some(rest) = trimmed.strip_prefix("ep ") {
+            let mut parts = rest.splitn(2, ' ');
+            let outcome = parts.next().unwrap_or("").trim().to_lowercase();
+            let summary = parts.next().unwrap_or("").trim().to_string();
+
+            let valid = outcome == "ok" || outcome == "fail" || outcome == "note";
+            if !valid || summary.is_empty() {
+                self.push("MOTHER: Format is: ep ok <what worked> | ep fail <what failed> | ep note <note>");
+                return;
+            }
+
+            match self.db.add_episode(&outcome, &summary) {
+                Ok(()) => self.push(format!("MOTHER: EPISODE RECORDED [{}] {}", outcome, summary)),
+                Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
+            }
+            return;
+        }
+
+        // list concepts
         if trimmed.eq_ignore_ascii_case("list") {
             match self.db.list_concepts(20) {
                 Ok(items) if items.is_empty() => self.push("MOTHER: No concepts stored yet."),
@@ -72,6 +110,7 @@ impl Dialog {
             return;
         }
 
+        // show <concept>
         if let Some(rest) = trimmed.strip_prefix("show ") {
             let name = rest.trim().to_lowercase();
             match self.db.get_concept(&name) {
@@ -82,6 +121,7 @@ impl Dialog {
             return;
         }
 
+        // learn <concept> is <definition>
         if let Some(rest) = trimmed.strip_prefix("learn ") {
             let parts: Vec<&str> = rest.splitn(2, " is ").collect();
             if parts.len() != 2 {
@@ -110,8 +150,8 @@ impl Dialog {
             return;
         }
 
+        // rel <from> <type> <to>
         if let Some(rest) = trimmed.strip_prefix("rel ") {
-            // rel <from> <type> <to>
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if parts.len() < 3 {
                 self.push("MOTHER: Format is: rel <from> <type> <to>");
@@ -134,6 +174,7 @@ impl Dialog {
             return;
         }
 
+        // fallback
         self.push(self.eliza_reflect(trimmed));
     }
 
