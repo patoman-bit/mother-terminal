@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, Result};
+use rusqlite::{Connection, Result, params};
 use time::OffsetDateTime;
 
 pub struct Database {
@@ -20,6 +20,22 @@ pub struct Relation {
     pub from: String,
     pub relation_type: String,
     pub to: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Evidence {
+    pub id: i64,
+    pub concept: String,
+    pub summary: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Claim {
+    pub id: i64,
+    pub concept: String,
+    pub statement: String,
     pub created_at: String,
 }
 
@@ -60,7 +76,21 @@ impl Database {
               outcome TEXT NOT NULL,
               summary TEXT NOT NULL
             );
-            "
+
+            CREATE TABLE IF NOT EXISTS concept_evidence (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              concept TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS concept_claims (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              concept TEXT NOT NULL,
+              statement TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            ",
         )?;
 
         Ok(Self { conn })
@@ -88,7 +118,7 @@ impl Database {
 
     pub fn get_concept(&self, name: &str) -> Result<Option<Concept>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1"
+            "SELECT id, name, definition, confidence, created_at FROM concepts WHERE name = ?1",
         )?;
 
         let mut rows = stmt.query(params![name])?;
@@ -110,7 +140,7 @@ impl Database {
             "SELECT id, name, definition, confidence, created_at
              FROM concepts
              ORDER BY id DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -131,9 +161,9 @@ impl Database {
     }
 
     pub fn list_concept_names(&self, limit: usize) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM concepts ORDER BY name ASC LIMIT ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM concepts ORDER BY name ASC LIMIT ?1")?;
         let rows = stmt.query_map(params![limit as i64], |row| row.get(0))?;
         let mut out = Vec::new();
         for r in rows {
@@ -164,7 +194,7 @@ impl Database {
             WHERE from_concept = ?1 OR to_concept = ?1
             ORDER BY id DESC
             LIMIT ?2
-            "
+            ",
         )?;
 
         let rows = stmt.query_map(params![concept, limit as i64], |row| {
@@ -174,6 +204,61 @@ impl Database {
                 relation_type: row.get(2)?,
                 to: row.get(3)?,
                 created_at: row.get(4)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    // --- Evidence / claims ---
+    pub fn list_evidence_for(&self, concept: &str, limit: usize) -> Result<Vec<Evidence>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, concept, summary, created_at
+            FROM concept_evidence
+            WHERE concept = ?1
+            ORDER BY id DESC
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![concept, limit as i64], |row| {
+            Ok(Evidence {
+                id: row.get(0)?,
+                concept: row.get(1)?,
+                summary: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    pub fn list_claims_for(&self, concept: &str, limit: usize) -> Result<Vec<Claim>> {
+        let mut stmt = self.conn.prepare(
+            "
+            SELECT id, concept, statement, created_at
+            FROM concept_claims
+            WHERE concept = ?1
+            ORDER BY id DESC
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(params![concept, limit as i64], |row| {
+            Ok(Claim {
+                id: row.get(0)?,
+                concept: row.get(1)?,
+                statement: row.get(2)?,
+                created_at: row.get(3)?,
             })
         })?;
 
@@ -199,7 +284,7 @@ impl Database {
             "SELECT id, captured_at, outcome, summary
              FROM episodes
              ORDER BY id DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit as i64], |row| {
