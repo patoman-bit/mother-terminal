@@ -1,12 +1,13 @@
-use std::io;
 use crossterm::{
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use std::io;
 
 mod app;
 mod db;
 mod modules;
+mod search;
 mod ui;
 
 fn main() -> io::Result<()> {

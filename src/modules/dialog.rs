@@ -1,12 +1,13 @@
-use ratatui::{
-    widgets::{Block, Borders, Paragraph},
-    layout::{Layout, Direction, Constraint},
-    Frame,
-};
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    widgets::{Block, Borders, Paragraph},
+};
 
 use super::Module;
-use crate::db::{Database, Concept};
+use crate::db::{Concept, Database};
+use crate::search;
 
 #[derive(Clone, Debug)]
 struct Proposal {
@@ -37,6 +38,8 @@ impl Dialog {
                 "  episodes".into(),
                 "  show <concept>".into(),
                 "  list".into(),
+                "  doctor".into(),
+                "  search <url>".into(),
                 "MOTHER: If a proposal appears: press [y] to confirm, [n] to reject.".into(),
             ],
             db,
@@ -52,7 +55,7 @@ impl Dialog {
     }
 
     fn eliza_reflect(&self, text: &str) -> String {
-        format!("MOTHER: Why do you say '{}'?",&text)
+        format!("MOTHER: Why do you say '{}'?", &text)
     }
 
     fn handle_command(&mut self, line: &str) {
@@ -68,7 +71,10 @@ impl Dialog {
                 Ok(items) => {
                     self.push("MOTHER: Recent episodes:");
                     for e in items {
-                        self.push(format!("  - [{}] {}  {}", e.outcome, e.captured_at, e.summary));
+                        self.push(format!(
+                            "  - [{}] {}  {}",
+                            e.outcome, e.captured_at, e.summary
+                        ));
                     }
                 }
                 Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
@@ -89,7 +95,10 @@ impl Dialog {
             }
 
             match self.db.add_episode(&outcome, &summary) {
-                Ok(()) => self.push(format!("MOTHER: EPISODE RECORDED [{}] {}", outcome, summary)),
+                Ok(()) => self.push(format!(
+                    "MOTHER: EPISODE RECORDED [{}] {}",
+                    outcome, summary
+                )),
                 Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
             }
             return;
@@ -168,9 +177,27 @@ impl Dialog {
             }
 
             match self.db.upsert_relation(&from, &relation_type, &to) {
-                Ok(()) => self.push(format!("MOTHER: Linked {} --{}--> {}", from, relation_type, to)),
+                Ok(()) => self.push(format!(
+                    "MOTHER: Linked {} --{}--> {}",
+                    from, relation_type, to
+                )),
                 Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
             }
+            return;
+        }
+
+        if trimmed.eq_ignore_ascii_case("doctor") {
+            self.doctor();
+            return;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("search ") {
+            let url = rest.trim();
+            if url.is_empty() {
+                self.push("MOTHER: Format is: search <url>");
+                return;
+            }
+            self.execute_search(url);
             return;
         }
 
@@ -207,6 +234,53 @@ impl Dialog {
             self.push("MOTHER: No pending proposal.");
         }
     }
+
+    fn doctor(&mut self) {
+        self.push("MOTHER: SYSTEM DIAGNOSTIC");
+
+        match self.db.list_concepts(1) {
+            Ok(_) => self.push("  DB: READY"),
+            Err(e) => self.push(format!("  DB: ERROR ({})", e)),
+        }
+
+        let tools = search::probe_tools();
+        self.push(format!("  SEARCH: lynx {}", status_word(tools.lynx)));
+        self.push(format!("  SEARCH: curl {}", status_word(tools.curl)));
+
+        if tools.ready() {
+            self.push("  SEARCH: READY FOR APPROVED QUERIES");
+        } else {
+            self.push("  SEARCH: lynx is required for execution");
+        }
+    }
+
+    fn execute_search(&mut self, url: &str) {
+        self.push(format!("MOTHER: APPROVED SEARCH -> {}", url));
+        match search::run_search(url) {
+            Ok(result) => {
+                if result.candidates.is_empty() {
+                    self.push("MOTHER: No candidates detected in output.");
+                } else {
+                    self.push("MOTHER: CANDIDATE LINKS/TITLES:");
+                    for (idx, line) in result.candidates.iter().take(12).enumerate() {
+                        self.push(format!("  {}. {}", idx + 1, line));
+                    }
+                    if result.candidates.len() > 12 {
+                        self.push("  ...");
+                    }
+                }
+
+                self.push("MOTHER: RAW OUTPUT (first 20 lines):");
+                for line in result.raw_text.lines().take(20) {
+                    self.push(format!("  {}", line));
+                }
+                if result.raw_text.lines().count() > 20 {
+                    self.push("  ...");
+                }
+            }
+            Err(err) => self.push(format!("MOTHER: SEARCH ERROR: {}", err)),
+        }
+    }
 }
 
 impl Module for Dialog {
@@ -217,8 +291,8 @@ impl Module for Dialog {
             .split(f.area());
 
         let text = self.history.join("\n");
-        let dialog = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title("DIALOG"));
+        let dialog =
+            Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("DIALOG"));
 
         let input = Paragraph::new(self.input.as_str())
             .block(Block::default().borders(Borders::ALL).title("INPUT"));
@@ -232,7 +306,9 @@ impl Module for Dialog {
             KeyCode::Char('y') if self.pending.is_some() => self.confirm_pending(),
             KeyCode::Char('n') if self.pending.is_some() => self.reject_pending(),
             KeyCode::Char(c) => self.input.push(c),
-            KeyCode::Backspace => { self.input.pop(); }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
             KeyCode::Enter => {
                 let line = self.input.clone();
                 self.push(format!("YOU: {}", line));
@@ -242,4 +318,8 @@ impl Module for Dialog {
             _ => {}
         }
     }
+}
+
+fn status_word(ok: bool) -> &'static str {
+    if ok { "OK" } else { "MISSING" }
 }
