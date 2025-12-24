@@ -1,5 +1,5 @@
 use std::{error::Error, io};
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::modules::{Module, console::Console, dialog::Dialog, graph::Graph};
@@ -16,18 +16,21 @@ pub struct App {
     pub console: Console,
     pub dialog: Dialog,
     pub graph: Graph,
+    pub command_mode: bool,
+    pub command_buffer: String,
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    // v0 simplicity: separate connections; later we’ll share one safely
     let mut app = App {
         screen: Screen::Console,
         console: Console::new(),
         dialog: Dialog::new(Database::init("mother.db")?),
         graph: Graph::new(Database::init("mother.db")?),
+        command_mode: false,
+        command_buffer: String::new(),
     };
 
     loop {
@@ -41,21 +44,39 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                // Only treat Ctrl+<key> as global command shortcuts.
-                let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-
-                if is_ctrl {
+                // --- COMMAND MODE ---
+                if app.command_mode {
                     match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('c') => app.screen = Screen::Console,
-                        KeyCode::Char('d') => app.screen = Screen::Dialog,
-                        KeyCode::Char('g') => app.screen = Screen::Graph,
+                        KeyCode::Char(c) => app.command_buffer.push(c),
+                        KeyCode::Backspace => { app.command_buffer.pop(); }
+                        KeyCode::Enter => {
+                            match app.command_buffer.as_str() {
+                                "c" => app.screen = Screen::Console,
+                                "d" => app.screen = Screen::Dialog,
+                                "g" => app.screen = Screen::Graph,
+                                "q" => return Ok(()),
+                                _ => {}
+                            }
+                            app.command_buffer.clear();
+                            app.command_mode = false;
+                        }
+                        KeyCode::Esc => {
+                            app.command_buffer.clear();
+                            app.command_mode = false;
+                        }
                         _ => {}
                     }
                     continue;
                 }
 
-                // Otherwise: pass keystroke to current module (so typing works)
+                // Enter command mode
+                if let KeyCode::Char(':') = key.code {
+                    app.command_mode = true;
+                    app.command_buffer.clear();
+                    continue;
+                }
+
+                // Normal input → active module
                 match app.screen {
                     Screen::Console => app.console.handle_input(key),
                     Screen::Dialog => app.dialog.handle_input(key),
