@@ -1,9 +1,9 @@
-use std::{error::Error, io};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::{error::Error, io};
 
-use crate::modules::{Module, console::Console, dialog::Dialog, graph::Graph};
 use crate::db::Database;
+use crate::modules::{Module, console::Console, dialog::Dialog, graph::Graph};
 
 pub enum Screen {
     Console,
@@ -31,12 +31,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
 
     loop {
-        terminal.draw(|f| {
-            match app.screen {
-                Screen::Console => app.console.render(f),
-                Screen::Dialog => app.dialog.render(f),
-                Screen::Graph => app.graph.render(f),
-            }
+        terminal.draw(|f| match app.screen {
+            Screen::Console => app.console.render(f),
+            Screen::Dialog => app.dialog.render(f),
+            Screen::Graph => app.graph.render(f),
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
