@@ -8,3 +8,4 @@ pub trait Module {
 
 pub mod console;
 pub mod dialog;
+pub mod graph;

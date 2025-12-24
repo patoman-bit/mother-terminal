@@ -25,7 +25,7 @@ impl Module for Console {
             ])
             .split(f.area());
 
-        let header = Paragraph::new("MOTHER SYSTEM CONSOLE  |  [d] DIALOG  [q] QUIT")
+        let header = Paragraph::new("MOTHER SYSTEM CONSOLE  |  [Ctrl+D] DIALOG  [Ctrl+G] GRAPH  [Ctrl+Q] QUIT")
             .block(Block::default().borders(Borders::ALL));
 
         let body = Paragraph::new(

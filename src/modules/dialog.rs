@@ -30,9 +30,11 @@ impl Dialog {
                 "MOTHER: DIALOG READY.".into(),
                 "MOTHER: Commands:".into(),
                 "  learn <concept> is <definition>".into(),
+                "  rel <from> <type> <to>".into(),
                 "  show <concept>".into(),
                 "  list".into(),
-                "MOTHER: Press [y] to confirm a proposal, [n] to reject.".into(),
+                "MOTHER: Screens: [Ctrl+C] CONSOLE  [Ctrl+G] GRAPH".into(),
+                "MOTHER: If a proposal appears: press [y] to confirm, [n] to reject.".into(),
             ],
             db,
             pending: None,
@@ -41,14 +43,12 @@ impl Dialog {
 
     fn push(&mut self, line: impl Into<String>) {
         self.history.push(line.into());
-        // keep history from growing forever (v0)
-        if self.history.len() > 200 {
-            self.history.drain(0..50);
+        if self.history.len() > 220 {
+            self.history.drain(0..60);
         }
     }
 
     fn eliza_reflect(&self, text: &str) -> String {
-        // Minimal seed behavior; will evolve later.
         format!("MOTHER: Why do you say '{}'?",&text)
     }
 
@@ -58,7 +58,6 @@ impl Dialog {
             return;
         }
 
-        // LIST
         if trimmed.eq_ignore_ascii_case("list") {
             match self.db.list_concepts(20) {
                 Ok(items) if items.is_empty() => self.push("MOTHER: No concepts stored yet."),
@@ -73,7 +72,6 @@ impl Dialog {
             return;
         }
 
-        // SHOW <concept>
         if let Some(rest) = trimmed.strip_prefix("show ") {
             let name = rest.trim().to_lowercase();
             match self.db.get_concept(&name) {
@@ -84,14 +82,13 @@ impl Dialog {
             return;
         }
 
-        // LEARN <concept> is <definition>
         if let Some(rest) = trimmed.strip_prefix("learn ") {
-            // naive parse: "<concept> is <definition>"
             let parts: Vec<&str> = rest.splitn(2, " is ").collect();
             if parts.len() != 2 {
                 self.push("MOTHER: Format is: learn <concept> is <definition>");
                 return;
             }
+
             let name = parts[0].trim().to_lowercase();
             let definition = parts[1].trim().to_string();
 
@@ -100,13 +97,11 @@ impl Dialog {
                 return;
             }
 
-            // Create proposal (operator must confirm)
-            let proposal = Proposal {
+            self.pending = Some(Proposal {
                 name: name.clone(),
                 definition: definition.clone(),
-                confidence: 0.40, // starting confidence for user-provided claim
-            };
-            self.pending = Some(proposal);
+                confidence: 0.40,
+            });
 
             self.push("MOTHER: PROPOSAL CREATED.");
             self.push(format!("  Concept: {}", name));
@@ -115,7 +110,30 @@ impl Dialog {
             return;
         }
 
-        // Otherwise: ELIZA-style response (v0)
+        if let Some(rest) = trimmed.strip_prefix("rel ") {
+            // rel <from> <type> <to>
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() < 3 {
+                self.push("MOTHER: Format is: rel <from> <type> <to>");
+                self.push("MOTHER: Example: rel jwt used_for authentication");
+                return;
+            }
+            let from = parts[0].trim().to_lowercase();
+            let relation_type = parts[1].trim().to_lowercase();
+            let to = parts[2..].join(" ").trim().to_lowercase();
+
+            if from.is_empty() || relation_type.is_empty() || to.is_empty() {
+                self.push("MOTHER: rel fields must be non-empty.");
+                return;
+            }
+
+            match self.db.upsert_relation(&from, &relation_type, &to) {
+                Ok(()) => self.push(format!("MOTHER: Linked {} --{}--> {}", from, relation_type, to)),
+                Err(e) => self.push(format!("MOTHER: DB error: {}", e)),
+            }
+            return;
+        }
+
         self.push(self.eliza_reflect(trimmed));
     }
 
@@ -134,9 +152,7 @@ impl Dialog {
                     self.push("MOTHER: COMMITTED.");
                     self.push(format!("  Stored concept '{}'.", p.name));
                 }
-                Err(e) => {
-                    self.push(format!("MOTHER: DB error committing proposal: {}", e));
-                }
+                Err(e) => self.push(format!("MOTHER: DB error committing proposal: {}", e)),
             }
         } else {
             self.push("MOTHER: No pending proposal.");
@@ -156,10 +172,7 @@ impl Module for Dialog {
     fn render(&mut self, f: &mut Frame) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(3),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Min(3), Constraint::Length(3)])
             .split(f.area());
 
         let text = self.history.join("\n");
@@ -175,11 +188,8 @@ impl Module for Dialog {
 
     fn handle_input(&mut self, key: KeyEvent) {
         match key.code {
-            // proposal control
             KeyCode::Char('y') if self.pending.is_some() => self.confirm_pending(),
             KeyCode::Char('n') if self.pending.is_some() => self.reject_pending(),
-
-            // input editing
             KeyCode::Char(c) => self.input.push(c),
             KeyCode::Backspace => { self.input.pop(); }
             KeyCode::Enter => {
