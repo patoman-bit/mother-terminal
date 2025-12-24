@@ -5,7 +5,7 @@ use std::{error::Error, io};
 use crate::db::Database;
 use crate::modules::{Module, console::Console, dialog::Dialog, graph::Graph};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Screen {
     Console,
     Dialog,
@@ -55,7 +55,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                         CommandOutcome::Handled => continue,
                         CommandOutcome::Ignored => {}
                     }
-                } else if key.code == KeyCode::Char(':') {
+                } else if key.code == KeyCode::Char(':') && app.screen != Screen::Dialog {
                     app.command_mode = true;
                     app.command_buffer.clear();
                     app.status_line = "CMD MODE".to_string();
